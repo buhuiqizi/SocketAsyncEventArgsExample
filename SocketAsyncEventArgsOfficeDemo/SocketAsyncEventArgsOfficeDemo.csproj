@@ -45,6 +45,7 @@
   <ItemGroup>
     <Compile Include="AsyncUserToken.cs" />
     <Compile Include="BufferManager.cs" />
+    <Compile Include="MessageDeal.cs" />
     <Compile Include="MServer.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

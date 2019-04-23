@@ -33,6 +33,21 @@ namespace SocketAsyncEventArgsOfficeDemo
         ///</summary>
         public DateTime ConnectTime { get; set; }
 
+        ///<symmary>
+        ///包长
+        ///</symmary>
+        public int packageLen { get; set; }
+
+        ///<symmary>
+        ///包类型
+        ///</symmary>
+        public int packageType { get; set; }
+
+        ///<symmary>
+        ///是否还有数据可以发送
+        ///</symmary>
+        public List<int> sendPacketNum { get; set; }
+
         ///<summary>
         ///所属用户信息      要自定义
         ///</summary>>
@@ -41,11 +56,16 @@ namespace SocketAsyncEventArgsOfficeDemo
         ///<summary>
         ///数据缓存区
         ///</summary>
-        public List<byte> Buffer { get; set; }
+        public List<byte> receiveBuffer { get; set; }
+        public List<byte> sendBuffer { get; set; }
 
         public AsyncUserToken()
         {
-            this.Buffer = new List<byte>();
+            this.receiveBuffer = new List<byte>();
+            this.sendBuffer = new List<byte>();
+            this.sendPacketNum = new List<int>();
+            this.packageLen = 0;
+            this.packageType = 0;
         }
     }
 }

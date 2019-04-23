@@ -68,7 +68,7 @@ namespace SocketAsyncEventArgsOfficeDemo
 
         //从一个SocketAsyncEventArg移除缓存
         //将这个缓存放回缓存池
-        public void FreeBuffer(SocketAsyncEventArgs args)
+        public  void FreeBuffer(SocketAsyncEventArgs args)
         {
             //向m_freeIndexpool中添加一个int类型对象 offset就是获取的偏移量，是setbuffer时自己传入的
             m_freeIndexPool.Push(args.Offset);

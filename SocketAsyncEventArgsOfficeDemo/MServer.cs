@@ -41,7 +41,7 @@ namespace SocketAsyncEventArgsOfficeDemo
             //大小为：最大连接数量客户端  每个有读、写两块区域，大小都为receiveBufferSize
             m_bufferManager = new BufferManager(receiveBufferSize * numConnections * opsToPreEAlloc,
                                                 receiveBufferSize);
-            m_readWritePool = new SocketAsyncEventArgsPool(numConnections * 2);     //初始化了SAEA对象池，最大容量为总连接数量的两倍
+            m_readWritePool = new SocketAsyncEventArgsPool(numConnections);     //初始化了SAEA对象池，最大容量为总连接数量的两倍
             m_maxNumberAcceptedClients = new Semaphore(numConnections, numConnections);     //初始化信号量，param1为剩余数量，param2为总数量
             m_sendSaeaDic = new Dictionary<string, SocketAsyncEventArgs>();         //初始化sendSAEA字典
         }
@@ -58,7 +58,7 @@ namespace SocketAsyncEventArgsOfficeDemo
             SocketAsyncEventArgs readWriteEventArg;
 
             //new最大连接数量个SAEA对象，依次绑定好事件(或者委托?)，分配用户信息存储空间，分配好空间，然后放入SAEA池
-            for (int i = 0; i < m_numConnections * 2; i++)
+            for (int i = 0; i < m_numConnections; i++)
             {
                 readWriteEventArg = new SocketAsyncEventArgs();
                 //绑定完成事件
@@ -142,13 +142,14 @@ namespace SocketAsyncEventArgsOfficeDemo
             ((AsyncUserToken)readEventArgs.UserToken).Remote = e.RemoteEndPoint;
 
             //弹出一个SAEA，这个SAEA是用来发送消息的
-            SocketAsyncEventArgs sendSaea = m_readWritePool.Pop();
+            SocketAsyncEventArgs sendSaea = new SocketAsyncEventArgs();
             //将发送SAEA放入sendSaeaDic字典，方便以后使用
             m_sendSaeaDic.Add(e.AcceptSocket.RemoteEndPoint.ToString(), sendSaea);
+            //分配缓存区
+            //m_bufferManager.SetBuffer(sendSaea);
 
-            //获取已接受的客户端连接的套接字和IP端口放入用户信息中(sendSaea)
-            ((AsyncUserToken)sendSaea.UserToken).Socket = e.AcceptSocket;
-            ((AsyncUserToken)sendSaea.UserToken).Remote = e.RemoteEndPoint;
+            //将sendSaea指向readEentArgs的usertoken,这样，发送与接收的usertoken都是一个了
+            sendSaea.UserToken = (AsyncUserToken)readEventArgs.UserToken;
 
             Console.WriteLine("The Client IP:" + e.RemoteEndPoint);
 
@@ -175,9 +176,11 @@ namespace SocketAsyncEventArgsOfficeDemo
             switch (e.LastOperation)
             {
                 case SocketAsyncOperation.Receive:
+                    Console.WriteLine("调用了一次回调函数 RECV");
                     ProcessReceive(e);
                     break;
                 case SocketAsyncOperation.Send:
+                    Console.WriteLine("调用了一次回调函数 SEND");
                     ProcessSend(e);
                     break;
                 default:
@@ -190,28 +193,31 @@ namespace SocketAsyncEventArgsOfficeDemo
         //接收到了数据，将数据返回给客户端
         private void ProcessReceive(SocketAsyncEventArgs e)
         {
+            AsyncUserToken token = (AsyncUserToken)e.UserToken;
             try
             {
                 //检查这个远程主机是否关闭连接
-                AsyncUserToken token = (AsyncUserToken)e.UserToken;
+               
                 if (e.BytesTransferred > 0 && e.SocketError == SocketError.Success)
                 {
                     //增加服务器接收到的总字数
                     Interlocked.Add(ref m_totalBytesRead, e.BytesTransferred);
                     Console.WriteLine("The server has read a total of {0} bytes", m_totalBytesRead);
 
-                    //读取数据
-                    byte[] data = new byte[e.BytesTransferred];
-                    Array.Copy(e.Buffer, e.Offset, data, 0, e.BytesTransferred);
-                    string str = System.Text.Encoding.Default.GetString(data);
+                    //处理数据
+                    MessageDeal.ReceiveDeal(e);
 
-                    Console.WriteLine("Receive message :" + str);
+                    if (token.sendPacketNum.Count() > 0)
+                    {
+                        //调用发送函数的回调函数
+                        ProcessSend(m_sendSaeaDic[token.Socket.RemoteEndPoint.ToString()]);
+                    }
 
                     //将数据返回给客户端
-                    e.SetBuffer(e.Offset, e.BytesTransferred);
+                    //e.SetBuffer(e.Offset, e.BytesTransferred);
                     //这里是从读取到发送
-                    bool willRaiseEvent = token.Socket.SendAsync(e);
-                    Console.WriteLine("开始等待接收");
+                    Console.WriteLine("开始异步接收");
+                    bool willRaiseEvent = token.Socket.ReceiveAsync(e);
                     if (!willRaiseEvent)
                     {
                         ProcessReceive(e);
@@ -239,16 +245,31 @@ namespace SocketAsyncEventArgsOfficeDemo
             {
                 //完成了将数据返回给客户端
                 AsyncUserToken token = (AsyncUserToken)e.UserToken;
+                byte[] data;
+                int count = token.sendBuffer.Count;
 
-
-                //这里就是从发送循环到读取
-                //读取从客户端发送的下一个数据块
-                //bool willRaiseEvent = token.Socket.ReceiveAsync(e);
-                //Console.WriteLine("开始等待发送");
-                //if (!willRaiseEvent)
+                //if ( count > 1024)
                 //{
-                //    ProcessReceive(e);
+                //    data = token.sendBuffer.GetRange(0, 1024).ToArray();
+                //    token.sendBuffer.RemoveRange(0, 1024);
                 //}
+                //else
+                //{
+                //    data = token.sendBuffer.GetRange(0, count).ToArray();
+                //    token.sendBuffer.RemoveRange(0, count);
+                //}
+
+                data = token.sendBuffer.ToArray();
+                token.sendBuffer.Clear();
+
+                e.SetBuffer(data, 0, data.Length);
+
+                Console.WriteLine("开始异步发送 datasize:" + data.Count() + "data:" + System.Text.Encoding.UTF8.GetString(data));
+                bool willRaiseEvent = token.Socket.SendAsync(e);
+                if (!willRaiseEvent)
+                {
+                    ProcessSend(e);
+                }
             }
             else
             {
@@ -259,6 +280,7 @@ namespace SocketAsyncEventArgsOfficeDemo
         private void CloseClientSocket(SocketAsyncEventArgs e)
         {
             AsyncUserToken token = e.UserToken as AsyncUserToken;
+            string dicStr = token.Socket.RemoteEndPoint.ToString();
 
             //关闭与客户端关联的套接字
             try
@@ -272,10 +294,11 @@ namespace SocketAsyncEventArgsOfficeDemo
             //原子操作，使m_numConnectedSockets减一
             Interlocked.Decrement(ref m_numConnectedSockets);
 
-            //释放SocktAsyncEventArg，然后可被重用到其他客户端(这里使放入)
+            //释放SocktAsyncEventArg，然后可被重用到其他客户端(这里直接放入就行了)
+            //先释放分配的缓存区，然后从字典中删除sendSaea对象
+            //m_bufferManager.FreeBuffer(m_sendSaeaDic[dicStr]);
+            m_sendSaeaDic.Remove(dicStr);
             m_readWritePool.Push(e);
-            m_readWritePool.Push(m_sendSaeaDic[token.Remote.ToString()]);
-            m_sendSaeaDic.Remove(token.Remote.ToString());
 
             m_maxNumberAcceptedClients.Release();
             Console.WriteLine("A client has benn disconnected from the server.There are {0} clients connected to the server", m_numConnectedSockets);
